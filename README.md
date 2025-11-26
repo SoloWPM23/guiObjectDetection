@@ -19,7 +19,6 @@ A powerful desktop application for object detection using YOLOv5 and YOLOv11 mod
 - [GPU Support](#gpu-support)
 - [Screenshots](#screenshots)
 - [Contributing](#contributing)
-- [License](#license)
 
 ## ✨ Features
 
@@ -248,10 +247,6 @@ Contributions are welcome! Please follow these steps:
 3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
 4. Push to the branch (`git push origin feature/AmazingFeature`)
 5. Open a Pull Request
-
-## 📝 License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
 
 ## 👥 Contributors
 - Solo Wandika Putra Manurung @SoloWPM23-
