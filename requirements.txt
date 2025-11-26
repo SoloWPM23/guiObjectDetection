@@ -1,4 +1,34 @@
+# GUI Framework
 PyQt5>=5.15.0
+
+# Computer Vision & Image Processing
 opencv-python>=4.5.0
+
+# Deep Learning Framework
 torch>=1.9.0
+torchvision>=0.10.0
+
+# Array Processing
 numpy>=1.19.0
+
+# YOLOv11 Support (ultralytics library)
+ultralytics>=8.0.0
+
+# Additional dependencies (automatically installed with ultralytics but listed for clarity)
+pillow>=8.0.0
+pyyaml>=5.3.1
+requests>=2.23.0
+scipy>=1.4.1
+tqdm>=4.64.0
+pandas>=1.1.4
+seaborn>=0.11.0
+matplotlib>=3.3.0
+
+# Optional: For GPU support (if using CUDA-enabled GPU)
+--extra-index-url https://download.pytorch.org/whl/cu128
+
+# Pin PyTorch / torchvision / torchaudio to CUDA-enabled wheels (use == with +cu128)
+torch==2.7.1+cu128
+torchvision==0.22.1+cu128
+torchaudio==2.7.1+cu128
+# Note: Adjust the CUDA version (+cu102) based on your GPU and CUDA installation.

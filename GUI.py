@@ -8,28 +8,47 @@ import sys
 import cv2
 import numpy as np
 from pathlib import Path
-from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
-                             QHBoxLayout, QPushButton, QLabel, QComboBox, 
-                             QSlider, QFileDialog, QGroupBox, QProgressBar,
-                             QMessageBox, QScrollArea, QTextEdit, QRadioButton)
-from PyQt5.QtCore import Qt, QThread, pyqtSignal
+from PyQt5.QtWidgets import (
+    QApplication,
+    QMainWindow,
+    QWidget,
+    QVBoxLayout,
+    QHBoxLayout,
+    QPushButton,
+    QLabel,
+    QComboBox,
+    QSlider,
+    QFileDialog,
+    QGroupBox,
+    QProgressBar,
+    QMessageBox,
+    QScrollArea,
+    QTextEdit,
+    QRadioButton,
+)
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
 from PyQt5.QtGui import QPixmap, QImage, QPalette, QColor, QFont
 import torch
+from PIL import Image
 
 # Import fungsi run dari detect.py
 try:
     from detect import run
 except ImportError:
-    print("Error: detect.py tidak ditemukan. Pastikan file detect.py ada di direktori yang sama.")
+    print(
+        "Error: detect.py tidak ditemukan. Pastikan file detect.py ada di direktori yang sama."
+    )
     sys.exit(1)
+
 
 class DetectionThread(QThread):
     """Thread terpisah untuk proses deteksi agar GUI tetap responsif"""
+
     finished = pyqtSignal(str)
     progress = pyqtSignal(int)
     error = pyqtSignal(str)
     log = pyqtSignal(str)
-    
+
     def __init__(self, model_path, source, conf_thres, enhancement, device):
         super().__init__()
         self.model_path = model_path
@@ -47,14 +66,14 @@ class DetectionThread(QThread):
             self.log.emit(f"Device: {self.device.upper()}")
             if self.enhancement:
                 self.log.emit(f"Enhancement: {self.enhancement}")
-            
+
             # Jalankan deteksi dengan parameter yang dipilih
             output_path = run(
                 weights=self.model_path,
                 source=self.source,
                 conf_thres=self.conf_thres,
                 enhancement=self.enhancement,
-                device=self.device
+                device=self.device,
             )
 
             self.log.emit(f"Deteksi selesai!")
@@ -63,23 +82,95 @@ class DetectionThread(QThread):
             self.log.emit(f"Error: {str(e)}")
             self.error.emit(str(e))
 
+
+class VideoPreviewThread(QThread):
+    """Thread untuk live preview video dengan frame-by-frame playback"""
+
+    frame_ready = pyqtSignal(np.ndarray)
+    finished = pyqtSignal()
+    error = pyqtSignal(str)
+
+    def __init__(self, video_path):
+        super().__init__()
+        self.video_path = video_path
+        self.is_running = False
+        self.is_paused = False
+        self.cap = None
+
+    def run(self):
+        try:
+            self.cap = cv2.VideoCapture(self.video_path)
+            if not self.cap.isOpened():
+                self.error.emit(f"Tidak dapat membuka video: {self.video_path}")
+                return
+
+            self.is_running = True
+            fps = self.cap.get(cv2.CAP_PROP_FPS)
+            if fps <= 0:
+                fps = 30  # Default fps
+
+            delay = int(1000 / fps)  # Delay dalam milliseconds
+
+            while self.is_running:
+                if not self.is_paused:
+                    ret, frame = self.cap.read()
+                    if not ret:
+                        # Video selesai, restart dari awal
+                        self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                        continue
+
+                    # Emit frame ke GUI
+                    self.frame_ready.emit(frame)
+
+                # Sleep untuk maintain fps
+                self.msleep(delay)
+
+            self.finished.emit()
+
+        except Exception as e:
+            self.error.emit(str(e))
+
+        finally:
+            if self.cap:
+                self.cap.release()
+
+    def pause(self):
+        """Pause video playback"""
+        self.is_paused = True
+
+    def resume(self):
+        """Resume video playback"""
+        self.is_paused = False
+
+    def stop(self):
+        """Stop video playback"""
+        self.is_running = False
+        if self.cap:
+            self.cap.release()
+
+
 class ObjectDetectionApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Object Detection Application")
         self.setGeometry(100, 100, 1200, 800)
-        
+
         # Path dan variabel
         self.model_dir = Path("model")
         self.input_path = None
         self.output_path = None
         self.detection_thread = None
-        self.current_device = 'cpu'
-        
+        self.current_device = "cpu"
+
+        # Video preview variables
+        self.video_preview_thread = None
+        self.is_video_playing = False
+        self.current_video_path = None
+
         # Setup UI
         self.init_ui()
         self.apply_styles()
-    
+
     def on_device_changed(self):
         if self.cpu_radio.isChecked():
             self.current_device = "cpu"
@@ -100,77 +191,79 @@ class ObjectDetectionApp(QMainWindow):
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         main_layout = QHBoxLayout(central_widget)
-        
+
         # Panel Kiri - Kontrol
         left_panel = self.create_control_panel()
         main_layout.addWidget(left_panel, 1)
-        
+
         # Panel Kanan - Display
         right_panel = self.create_display_panel()
         main_layout.addWidget(right_panel, 2)
 
         self.on_device_changed()
-        
+
     def create_control_panel(self):
         """Membuat panel kontrol di sebelah kiri"""
         panel = QWidget()
         layout = QVBoxLayout(panel)
         layout.setSpacing(15)
-        
+
         # Header
         header = QLabel("Pengaturan Deteksi")
         header.setStyleSheet("font-size: 18px; font-weight: bold; padding: 10px;")
         layout.addWidget(header)
-        
+
         # 1. Pilih Model
         model_group = QGroupBox("1. Pilih Model")
         model_layout = QVBoxLayout()
-        
+
         self.model_combo = QComboBox()
         self.load_available_models()
         model_layout.addWidget(self.model_combo)
-        
+
         model_group.setLayout(model_layout)
         layout.addWidget(model_group)
-        
+
         # 2. Upload File
         upload_group = QGroupBox("2. Upload File")
         upload_layout = QVBoxLayout()
-        
+
         self.upload_btn = QPushButton("📁 Pilih Gambar/Video")
         self.upload_btn.clicked.connect(self.upload_file)
         upload_layout.addWidget(self.upload_btn)
-        
+
         self.file_label = QLabel("Belum ada file dipilih")
         self.file_label.setWordWrap(True)
         self.file_label.setStyleSheet("padding: 5px; color: #666;")
         upload_layout.addWidget(self.file_label)
-        
+
         upload_group.setLayout(upload_layout)
         layout.addWidget(upload_group)
-        
+
         # 3. Enhancement
         enhance_group = QGroupBox("3. Image Enhancement")
         enhance_layout = QVBoxLayout()
-        
+
         self.enhance_combo = QComboBox()
-        self.enhance_combo.addItems([
-            "Tidak Ada Enhancement",
-            "Histogram Equalization",
-            "CLAHE (Adaptive Histogram)",
-            "Brightness & Contrast",
-            "Sharpening",
-            "Denoising"
-        ])
+        self.enhance_combo.addItems(
+            [
+                "Tidak Ada Enhancement",
+                "Histogram Equalization",
+                "CLAHE (Adaptive Histogram)",
+                "Brightness & Contrast",
+                "Sharpening",
+                "Denoising",
+            ]
+        )
         enhance_layout.addWidget(self.enhance_combo)
-        
+
         enhance_group.setLayout(enhance_layout)
         layout.addWidget(enhance_group)
-        
+
         # 4. Confidence Threshold
         conf_group = QGroupBox("4. Confidence Threshold")
         conf_layout = QVBoxLayout()
-        
+
         self.conf_slider = QSlider(Qt.Orientation.Horizontal)
         self.conf_slider.setMinimum(1)
         self.conf_slider.setMaximum(100)
@@ -179,11 +272,11 @@ class ObjectDetectionApp(QMainWindow):
         self.conf_slider.setTickInterval(10)
         self.conf_slider.valueChanged.connect(self.update_conf_label)
         conf_layout.addWidget(self.conf_slider)
-        
+
         self.conf_label = QLabel("Confidence: 0.25")
         self.conf_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         conf_layout.addWidget(self.conf_label)
-        
+
         conf_group.setLayout(conf_layout)
         layout.addWidget(conf_group)
 
@@ -221,7 +314,8 @@ class ObjectDetectionApp(QMainWindow):
         # 6. Tombol Deteksi
         self.detect_btn = QPushButton("Mulai Deteksi")
         self.detect_btn.clicked.connect(self.start_detection)
-        self.detect_btn.setStyleSheet("""
+        self.detect_btn.setStyleSheet(
+            """
             QPushButton {
                 background-color: #4CAF50;
                 color: white;
@@ -236,19 +330,21 @@ class ObjectDetectionApp(QMainWindow):
             QPushButton:disabled {
                 background-color: #cccccc;
             }
-        """)
+        """
+        )
         layout.addWidget(self.detect_btn)
-        
+
         # Progress Bar
         self.progress_bar = QProgressBar()
         self.progress_bar.setVisible(False)
         layout.addWidget(self.progress_bar)
-        
+
         # 6. Tombol Download
         self.download_btn = QPushButton("💾 Download Hasil")
         self.download_btn.clicked.connect(self.download_result)
         self.download_btn.setEnabled(False)
-        self.download_btn.setStyleSheet("""
+        self.download_btn.setStyleSheet(
+            """
             QPushButton {
                 background-color: #2196F3;
                 color: white;
@@ -262,50 +358,107 @@ class ObjectDetectionApp(QMainWindow):
             QPushButton:disabled {
                 background-color: #cccccc;
             }
-        """)
+        """
+        )
         layout.addWidget(self.download_btn)
-        
+
         layout.addStretch()
         return panel
-    
+
     def create_display_panel(self):
         """Membuat panel display di sebelah kanan"""
         panel = QWidget()
         layout = QVBoxLayout(panel)
-        
+
         # Header
         header = QLabel("Hasil Deteksi")
         header.setStyleSheet("font-size: 18px; font-weight: bold; padding: 10px;")
         layout.addWidget(header)
-        
+
         # Scroll Area untuk gambar
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setStyleSheet("background-color: #f5f5f5; border: 2px solid #ddd;")
-        
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setStyleSheet(
+            "background-color: #f5f5f5; border: 2px solid #ddd;"
+        )
+        self.scroll_area.setMinimumSize(
+            640, 480
+        )  # Set minimum size untuk stable rendering
+
         self.image_label = QLabel()
         self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.image_label.setText("\n\nHasil deteksi akan muncul di sini")
         self.image_label.setStyleSheet("font-size: 16px; color: #999; padding: 50px;")
-        
-        scroll.setWidget(self.image_label)
-        layout.addWidget(scroll, 3)
-        
+        self.image_label.setMinimumSize(640, 480)
+        self.image_label.setScaledContents(False)
+
+        self.scroll_area.setWidget(self.image_label)
+        layout.addWidget(self.scroll_area, 3)
+
+        # Video Controls (hidden by default)
+        self.video_controls_group = QGroupBox("Video Controls")
+        video_controls_layout = QHBoxLayout()
+
+        self.play_pause_btn = QPushButton("▶ Play")
+        self.play_pause_btn.clicked.connect(self.toggle_video_playback)
+        self.play_pause_btn.setStyleSheet(
+            """
+            QPushButton {
+                background-color: #4CAF50;
+                color: white;
+                font-size: 14px;
+                padding: 8px 15px;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background-color: #45a049;
+            }
+        """
+        )
+
+        self.stop_btn = QPushButton("■ Stop")
+        self.stop_btn.clicked.connect(self.stop_video_preview)
+        self.stop_btn.setStyleSheet(
+            """
+            QPushButton {
+                background-color: #f44336;
+                color: white;
+                font-size: 14px;
+                padding: 8px 15px;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background-color: #da190b;
+            }
+        """
+        )
+
+        video_controls_layout.addWidget(self.play_pause_btn)
+        video_controls_layout.addWidget(self.stop_btn)
+        video_controls_layout.addStretch()
+
+        self.video_controls_group.setLayout(video_controls_layout)
+        self.video_controls_group.setVisible(False)
+        layout.addWidget(self.video_controls_group)
+
         # Info hasil
         self.info_label = QLabel()
-        self.info_label.setStyleSheet("padding: 10px; background-color: #e3f2fd; border-radius: 5px;")
+        self.info_label.setStyleSheet(
+            "padding: 10px; background-color: #e3f2fd; border-radius: 5px;"
+        )
         self.info_label.setVisible(False)
         layout.addWidget(self.info_label)
-        
+
         # Log area
         log_label = QLabel("Log Proses")
         log_label.setStyleSheet("font-size: 14px; font-weight: bold; margin-top: 10px;")
         layout.addWidget(log_label)
-        
+
         self.log_text = QTextEdit()
         self.log_text.setReadOnly(True)
         self.log_text.setMaximumHeight(150)
-        self.log_text.setStyleSheet("""
+        self.log_text.setStyleSheet(
+            """
             QTextEdit {
                 background-color: #263238;
                 color: #aed581;
@@ -315,11 +468,12 @@ class ObjectDetectionApp(QMainWindow):
                 border-radius: 4px;
                 padding: 5px;
             }
-        """)
+        """
+        )
         layout.addWidget(self.log_text, 1)
-        
+
         return panel
-    
+
     def load_available_models(self):
         """Memuat daftar model yang tersedia"""
         if self.model_dir.exists():
@@ -331,40 +485,168 @@ class ObjectDetectionApp(QMainWindow):
                 self.model_combo.addItem("Tidak ada model ditemukan")
         else:
             self.model_combo.addItem("Folder model tidak ditemukan")
-    
+
     def update_conf_label(self):
         """Update label confidence threshold"""
         value = self.conf_slider.value() / 100
         self.conf_label.setText(f"Confidence: {value:.2f}")
-    
+
     def upload_file(self):
         """Upload gambar atau video"""
-        file_filter = "Media Files (*.jpg *.jpeg *.png *.mp4 *.avi *.mov);;All Files (*.*)"
-        file_path, _ = QFileDialog.getOpenFileName(
-            self, "Pilih File", "", file_filter
+        file_filter = (
+            "Media Files (*.jpg *.jpeg *.png *.mp4 *.avi *.mov);;All Files (*.*)"
         )
-        
+        file_path, _ = QFileDialog.getOpenFileName(self, "Pilih File", "", file_filter)
+
         if file_path:
             self.input_path = file_path
             file_name = Path(file_path).name
             self.file_label.setText(f"✓ {file_name}")
-            self.file_label.setStyleSheet("padding: 5px; color: #4CAF50; font-weight: bold;")
-            
+            self.file_label.setStyleSheet(
+                "padding: 5px; color: #4CAF50; font-weight: bold;"
+            )
+
+            # Stop any existing video preview
+            self.stop_video_preview()
+
             # Preview untuk gambar
-            if file_path.lower().endswith(('.jpg', '.jpeg', '.png')):
+            if file_path.lower().endswith((".jpg", ".jpeg", ".png", ".bmp")):
+                self.video_controls_group.setVisible(False)
                 self.display_image(file_path)
-    
+                self.add_log(f"Preview gambar: {file_name}")
+
+            # Preview untuk video
+            elif file_path.lower().endswith((".mp4", ".avi", ".mov", ".mkv")):
+                self.video_controls_group.setVisible(True)
+                self.current_video_path = file_path
+                self.start_video_preview(file_path)
+                self.add_log(f"Preview video: {file_name}")
+                self.add_log("Gunakan tombol Play/Pause untuk mengontrol video")
+
     def display_image(self, image_path):
         """Menampilkan gambar di panel display"""
         pixmap = QPixmap(image_path)
         if not pixmap.isNull():
+            # Use scroll area viewport size for consistent scaling
+            viewport = self.scroll_area.viewport()
+            if not viewport:
+                return  # Viewport not available
+            viewport_size = viewport.size()
+            target_width = viewport_size.width() - 80
+            target_height = viewport_size.height() - 80
+
             scaled_pixmap = pixmap.scaled(
-                self.image_label.size(), 
-                Qt.AspectRatioMode.KeepAspectRatio, 
-                Qt.TransformationMode.SmoothTransformation
+                target_width,
+                target_height,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
             )
             self.image_label.setPixmap(scaled_pixmap)
-    
+
+    def start_video_preview(self, video_path):
+        """Mulai live preview untuk video"""
+        try:
+            # Stop existing preview if any
+            self.stop_video_preview()
+
+            # Create and start video preview thread
+            self.video_preview_thread = VideoPreviewThread(video_path)
+            self.video_preview_thread.frame_ready.connect(self.display_video_frame)
+            self.video_preview_thread.error.connect(self.on_video_preview_error)
+            self.video_preview_thread.finished.connect(self.on_video_preview_finished)
+            self.video_preview_thread.start()
+
+            self.is_video_playing = True
+            self.play_pause_btn.setText("⏸ Pause")
+
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Gagal memulai preview video: {str(e)}")
+
+    def display_video_frame(self, frame):
+        """Menampilkan frame video ke QLabel"""
+        try:
+            # Convert BGR to RGB
+            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+            # Get dimensions
+            h, w, ch = rgb_frame.shape
+            bytes_per_line = ch * w
+
+            # Convert to QImage
+            qt_image = QImage(
+                rgb_frame.data, w, h, bytes_per_line, QImage.Format.Format_RGB888
+            )
+
+            # Convert to QPixmap and scale
+            pixmap = QPixmap.fromImage(qt_image)
+
+            # Use scroll area viewport size instead of label size to prevent zoom
+            viewport_widget = self.scroll_area.viewport() if self.scroll_area else None
+            if viewport_widget is None:
+                return  # UI component no longer available (e.g., window closed)
+            viewport_size = viewport_widget.size()
+            # Reduce size slightly to account for margins/padding
+            target_width = max(1, viewport_size.width() - 80)
+            target_height = max(1, viewport_size.height() - 80)
+
+            scaled_pixmap = pixmap.scaled(
+                target_width,
+                target_height,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+
+            # Display
+            self.image_label.setPixmap(scaled_pixmap)
+
+        except Exception as e:
+            print(f"Error displaying frame: {e}")
+
+    def toggle_video_playback(self):
+        """Toggle play/pause untuk video preview"""
+        if not self.video_preview_thread:
+            # Jika belum ada thread, start preview
+            if self.current_video_path:
+                self.start_video_preview(self.current_video_path)
+            return
+
+        if self.is_video_playing:
+            # Pause
+            self.video_preview_thread.pause()
+            self.is_video_playing = False
+            self.play_pause_btn.setText("▶ Play")
+            self.add_log("Video preview: Paused")
+        else:
+            # Resume
+            self.video_preview_thread.resume()
+            self.is_video_playing = True
+            self.play_pause_btn.setText("⏸ Pause")
+            self.add_log("Video preview: Playing")
+
+    def stop_video_preview(self):
+        """Stop video preview dan bersihkan resources"""
+        if self.video_preview_thread:
+            self.video_preview_thread.stop()
+            self.video_preview_thread.wait()  # Wait for thread to finish
+            self.video_preview_thread = None
+            self.is_video_playing = False
+            self.play_pause_btn.setText("▶ Play")
+
+            # Clear display
+            self.image_label.clear()
+            self.image_label.setText("\n\nVideo preview stopped")
+            self.add_log("Video preview: Stopped")
+
+    def on_video_preview_error(self, error_msg):
+        """Handle error saat video preview"""
+        QMessageBox.warning(self, "Video Preview Error", error_msg)
+        self.stop_video_preview()
+
+    def on_video_preview_finished(self):
+        """Handle ketika video preview selesai"""
+        self.is_video_playing = False
+        self.play_pause_btn.setText("▶ Play")
+
     def get_enhancement_type(self):
         """Mendapatkan jenis enhancement yang dipilih"""
         enhancement_map = {
@@ -373,36 +655,44 @@ class ObjectDetectionApp(QMainWindow):
             "CLAHE (Adaptive Histogram)": "clahe",
             "Brightness & Contrast": "brightness",
             "Sharpening": "sharpen",
-            "Denoising": "denoise"
+            "Denoising": "denoise",
         }
         return enhancement_map[self.enhance_combo.currentText()]
-    
+
     def start_detection(self):
         """Memulai proses deteksi"""
+        # Stop video preview before detection
+        if self.video_preview_thread:
+            self.stop_video_preview()
+
         if not self.input_path:
-            QMessageBox.warning(self, "Peringatan", "Silakan pilih file terlebih dahulu!")
+            QMessageBox.warning(
+                self, "Peringatan", "Silakan pilih file terlebih dahulu!"
+            )
             return
-        
+
         if self.model_combo.currentIndex() == -1:
-            QMessageBox.warning(self, "Peringatan", "Silakan pilih model terlebih dahulu!")
+            QMessageBox.warning(
+                self, "Peringatan", "Silakan pilih model terlebih dahulu!"
+            )
             return
-        
+
         # Clear log
         self.log_text.clear()
         self.add_log("=" * 50)
         self.add_log("MEMULAI PROSES DETEKSI")
         self.add_log("=" * 50)
-        
+
         # Disable tombol dan tampilkan progress
         self.detect_btn.setEnabled(False)
         self.progress_bar.setVisible(True)
         self.progress_bar.setRange(0, 0)  # Indeterminate mode
-        
+
         # Dapatkan parameter
         model_path = self.model_combo.currentData()
         conf_thres = self.conf_slider.value() / 100
         enhancement = self.get_enhancement_type()
-        
+
         # Jalankan deteksi di thread terpisah
         self.detection_thread = DetectionThread(
             model_path, self.input_path, conf_thres, enhancement, self.current_device
@@ -411,7 +701,7 @@ class ObjectDetectionApp(QMainWindow):
         self.detection_thread.error.connect(self.on_detection_error)
         self.detection_thread.log.connect(self.add_log)
         self.detection_thread.start()
-    
+
     def add_log(self, message):
         """Tambahkan pesan ke log"""
         self.log_text.append(message)
@@ -419,56 +709,74 @@ class ObjectDetectionApp(QMainWindow):
         scrollbar = self.log_text.verticalScrollBar()
         if scrollbar:
             scrollbar.setValue(scrollbar.maximum())
-    
+
     def on_detection_finished(self, output_path):
         """Callback ketika deteksi selesai"""
         self.output_path = output_path
-        
+
         # Enable tombol kembali
         self.detect_btn.setEnabled(True)
         self.progress_bar.setVisible(False)
         self.download_btn.setEnabled(True)
-        
+
         # Tampilkan hasil
-        if output_path.lower().endswith(('.jpg', '.jpeg', '.png')):
+        if output_path.lower().endswith((".jpg", ".jpeg", ".png")):
+            # Preview gambar hasil
             self.display_image(output_path)
+            self.video_controls_group.setVisible(False)
             self.info_label.setText("✓ Deteksi berhasil! Gambar siap diunduh.")
+            self.add_log("Preview hasil: Gambar ditampilkan")
+        elif output_path.lower().endswith((".mp4", ".avi", ".mov", ".mkv")):
+            # Preview video hasil dengan auto-play
+            self.video_controls_group.setVisible(True)
+            self.current_video_path = output_path
+            self.start_video_preview(output_path)
+            self.info_label.setText(
+                "✓ Deteksi berhasil! Video siap diunduh. Preview sedang diputar."
+            )
+            self.add_log("Preview hasil: Video diputar otomatis")
         else:
-            self.info_label.setText("✓ Deteksi berhasil! Video siap diunduh.")
-        
+            self.info_label.setText("✓ Deteksi berhasil! File siap diunduh.")
+
         self.info_label.setVisible(True)
-        
-        QMessageBox.information(self, "Sukses", "Deteksi selesai!")
-    
+
+        QMessageBox.information(
+            self, "Sukses", "Deteksi selesai! Preview hasil ditampilkan."
+        )
+
     def on_detection_error(self, error_msg):
         """Callback ketika terjadi error"""
         self.detect_btn.setEnabled(True)
         self.progress_bar.setVisible(False)
         QMessageBox.critical(self, "Error", f"Terjadi kesalahan:\n{error_msg}")
-    
+
     def download_result(self):
         """Download hasil deteksi"""
         if not self.output_path:
             return
-        
+
         file_ext = Path(self.output_path).suffix
         file_filter = f"File (*{file_ext})"
-        
+
         save_path, _ = QFileDialog.getSaveFileName(
             self, "Simpan Hasil", f"result{file_ext}", file_filter
         )
-        
+
         if save_path:
             try:
                 import shutil
+
                 shutil.copy2(self.output_path, save_path)
-                QMessageBox.information(self, "Sukses", f"File berhasil disimpan ke:\n{save_path}")
+                QMessageBox.information(
+                    self, "Sukses", f"File berhasil disimpan ke:\n{save_path}"
+                )
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Gagal menyimpan file:\n{str(e)}")
-    
+
     def apply_styles(self):
         """Menerapkan style ke aplikasi"""
-        self.setStyleSheet("""
+        self.setStyleSheet(
+            """
             QMainWindow {
                 background-color: #fafafa;
             }
@@ -492,13 +800,16 @@ class ObjectDetectionApp(QMainWindow):
             QComboBox:hover, QPushButton:hover {
                 border-color: #2196F3;
             }
-        """)
+        """
+        )
+
 
 def main():
     app = QApplication(sys.argv)
     win = ObjectDetectionApp()
     win.show()
     sys.exit(app.exec_())
+
 
 if __name__ == "__main__":
     main()
