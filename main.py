@@ -2,7 +2,11 @@
 Object Detection Desktop Application
 Main entry point untuk aplikasi deteksi objek dengan GUI
 
-Author: Solo Wandika Putra Manurung
+Author:
+- Solo Wandika Putra Manurung
+- Mukti Jaenal
+- Rafael Paulus Ardhito Sihaloho
+
 Version: 1.0.0
 """
 
