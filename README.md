@@ -230,13 +230,14 @@ If GPU is not detected:
 ## 📸 Screenshots
 
 ### Main Interface
-*(Add screenshot of main GUI here)*
+<img width="1919" height="1017" alt="Screenshot 2025-11-27 182111" src="https://github.com/user-attachments/assets/cb810508-4a9b-41d7-b514-379b9f9a939e" />
 
 ### Detection Results
-*(Add screenshot of detection results here)*
+**Without Enhancement**
+![withoutEnhancement](https://github.com/user-attachments/assets/6b04a2b9-c983-4e2c-9c20-f4d0160a946f)
 
-### Video Processing
-*(Add screenshot of video processing here)*
+**With Enhancement**
+![HE](https://github.com/user-attachments/assets/71d1f8e9-3d64-422e-ae36-14daa7eb9a5f)
 
 ## 🤝 Contributing
 
