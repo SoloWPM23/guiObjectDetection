@@ -252,7 +252,7 @@ Contributions are welcome! Please follow these steps:
 ## 👥 Contributors
 - Solo Wandika Putra Manurung @SoloWPM23-
 - Mukti Jaenal @Mukti-J-
-- Rafael Paulus Ardhito Sihaloho-
+- Rafael Paulus Ardhito Sihaloho @rafaelganteng72-ux-
 
 **Tugas Akhir Deep Learning G**
 
